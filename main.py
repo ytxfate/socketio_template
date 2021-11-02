@@ -23,6 +23,7 @@ PSUB_CHANNEL = f"{__REDIS_KEY_PREFIX}-test*"
 eventlet.monkey_patch()
 
 # 本次测试推送 redis 订阅信息
+# redis_cli = redis.Redis("test-redis-for-socketio", 6379, decode_responses=True) # use docker-compose links
 redis_cli = redis.Redis("127.0.0.1", 6379, decode_responses=True)
 
 sio = socketio.Server(async_mode='eventlet',

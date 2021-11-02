@@ -15,6 +15,7 @@ import json
 import redis
 # Local application imports
 
+# redis_cli = redis.Redis("test-redis-for-socketio", 6379, decode_responses=True) # use docker-compose links
 redis_cli = redis.Redis("127.0.0.1", 6379, decode_responses=True)
 
 chans = ['test_1','test_2','test_3','test_4','test_5']
