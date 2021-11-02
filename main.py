@@ -7,14 +7,18 @@
 '''
 
 # Standard library imports
-
+import json
 # Third party imports
 import eventlet
 import redis
 import socketio
 from loguru import logger
 # Local application imports
-from conf.socketio_conf import SIO_NAMESPACE, SIO_ROOM_NAME
+
+__REDIS_KEY_PREFIX = "ceshi"
+# socketio uid and room name mapping hash
+SIO_UID_ROOM_HASH = f"{__REDIS_KEY_PREFIX}:uid_room_mapping.hash"
+PSUB_CHANNEL = f"{__REDIS_KEY_PREFIX}-test*"
 
 eventlet.monkey_patch()
 
@@ -27,42 +31,83 @@ sio = socketio.Server(async_mode='eventlet',
                       )
 app = socketio.WSGIApp(sio,
                        static_files={'/': {'content_type': 'text/html',
-                                           'filename': 'templates/index.html'}
+                                           'filename': 'web/templates/index.html'},
+                                     '/static': 'web/static'
                                      }
                        )
 
 
 @sio.event
 def connect(sid, environ):
-    logger.info(f'connect : {sid}, join [{SIO_NAMESPACE}] room [{SIO_ROOM_NAME}]')
-    sio.enter_room(sid, SIO_ROOM_NAME, namespace=SIO_NAMESPACE)
+    logger.info(f'connect : {sid}')
+
+@sio.on("login")
+def login(sid, data):
+    """登录"""
+    # 检验用户
+    room_name = redis_cli.hget(SIO_UID_ROOM_HASH, data)
+    if room_name is None:
+        sio.disconnect(sid=sid)
+        logger.info(f'room name get error, disconnect : {sid}')
+    else:
+        sio.enter_room(sid, room_name)
+        logger.info(f'{sid} join room [{room_name}]')
+
 
 @sio.event
-def my_message(sid, data):
-    logger.info('message ', data)
+def disconnect(sid):    
+    room_names = sio.rooms(sid)
+    for room_name in room_names:
+        sio.leave_room(sid, room_name)
+    logger.info(f'disconnect : {sid}, leave rooms {room_names}')
 
-@sio.event
-def disconnect(sid):
-    logger.info(f'disconnect : {sid}, leave [{SIO_NAMESPACE}] room [{SIO_ROOM_NAME}]')
-    sio.leave_room(sid, SIO_ROOM_NAME, namespace=SIO_NAMESPACE)
 
 def back_task():
     """后台任务实例
     """
     pub = redis_cli.pubsub()
-    pub.subscribe("test")
-    for p in pub.listen():
-        users = sio.manager.rooms.get(SIO_NAMESPACE, {}).get(SIO_ROOM_NAME, {})
-        user_size = len(users)
-        if user_size > 0:
-            logger.debug(f"push msg: {p}")
-            sio.emit("server_response", p['data'], room=SIO_ROOM_NAME, namespace=SIO_NAMESPACE)
-        else:
-            logger.info("room has no client, skip...")
-        sio.sleep() # 必加
+    pub.psubscribe(PSUB_CHANNEL)
+    for p_res in pub.listen():
+        # 判断消息类型
+        if p_res.get("type") != 'pmessage':
+            sio.sleep()
+            continue
+        # 判断数据格式是否正确
+        res_data = p_res.get("data", "")
+        try:
+            res_data = json.loads(res_data, encoding='utf-8')
+        except Exception as e:
+            logger.exception(e)
+            logger.error(res_data)
+            sio.sleep()
+            continue
+        # 判断接收到的字符串是否为字典
+        if not isinstance(res_data, dict):
+            logger.warning(f'redis subscribe info is not dict: {res_data}')
+            sio.sleep()
+            continue
+        # 判断必要字段是否存在
+        if "uid" not in res_data or "data" not in res_data:
+            logger.warning(f'Important fields[uid, data] are missing: {res_data}')
+            sio.sleep()
+            continue
+        # 判断 room name 是否存在
+        room_name = redis_cli.hget(SIO_UID_ROOM_HASH, res_data['uid'])
+        if room_name is None:
+            logger.warning(f'mismatch room name: {res_data}')
+            sio.sleep()
+            continue
+        # 判断 room 是否无人
+        room_users = sio.manager.rooms.get("/", {}).get(room_name, {})
+        if len(room_users) <= 0:
+            logger.info(f"room [{room_name}] has no client, skip...")
+            sio.sleep() # 必加
+            continue
+        # 推送数据
+        logger.debug(f"room [{room_name}] push msg: {res_data['data']}")
+        sio.emit("server_response", res_data['data'], room=room_name)
 
 
 if __name__ == '__main__':
-    logger.info(f'Default NAMESPACE: {SIO_NAMESPACE}, Default Room Name: {SIO_ROOM_NAME}')
     sio.start_background_task(back_task)
     eventlet.wsgi.server(eventlet.listen(('', 5000)), app)
