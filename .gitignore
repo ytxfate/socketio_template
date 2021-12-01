@@ -14,3 +14,6 @@ venv.bak/
 .vscode
 # pycharm config
 .idea
+
+# other
+lib
