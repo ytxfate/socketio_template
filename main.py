@@ -51,6 +51,9 @@ def login(sid, data):
         sio.disconnect(sid=sid)
         logger.info(f'room name get error, disconnect : {sid}')
     else:
+        before_room_users = sio.manager.rooms.get("/", {}).get(room_name, {})
+        if len(before_room_users) <= 0:
+            sio.start_background_task(back_task, room_name=room_name)
         sio.enter_room(sid, room_name)
         logger.info(f'{sid} join room [{room_name}]')
 
@@ -63,18 +66,19 @@ def disconnect(sid):
     logger.info(f'disconnect : {sid}, leave rooms {room_names}')
 
 
-def back_task():
+def back_task(room_name: str):
     """后台任务实例
     """
     pub = redis_cli.pubsub()
-    pub.psubscribe(PSUB_CHANNEL)
+    pub.subscribe(room_name)
     for p_res in pub.listen():
         # 判断消息类型
-        if p_res.get("type") != 'pmessage':
+        if p_res.get("type") != 'message':
             sio.sleep()
             continue
         # 判断数据格式是否正确
         res_data = p_res.get("data", "")
+        logger.info(f'res_data: {res_data}')
         try:
             res_data = json.loads(res_data, encoding='utf-8')
         except Exception as e:
@@ -97,18 +101,18 @@ def back_task():
         if room_name is None:
             logger.warning(f'mismatch room name: {res_data}')
             sio.sleep()
-            continue
+            return
         # 判断 room 是否无人
         room_users = sio.manager.rooms.get("/", {}).get(room_name, {})
         if len(room_users) <= 0:
             logger.info(f"room [{room_name}] has no client, skip...")
             sio.sleep() # 必加
-            continue
+            return
         # 推送数据
         logger.debug(f"room [{room_name}] push msg: {res_data['data']}")
         sio.emit("server_response", res_data['data'], room=room_name)
 
 
 if __name__ == '__main__':
-    sio.start_background_task(back_task)
+    # sio.start_background_task(back_task)
     eventlet.wsgi.server(eventlet.listen(('', 5000)), app)
