@@ -17,7 +17,12 @@ app_run_conf = {
     "PORT": 5000,
 }
 
-__REDIS_KEY_PREFIX = "ceshi"
+__REDIS_KEY_PREFIX = "socketio_server_v1.0"
 # socketio uid and room name mapping hash
-SIO_UID_ROOM_HASH = f"{__REDIS_KEY_PREFIX}:uid_room_mapping.hash"
-PSUB_CHANNEL = f"{__REDIS_KEY_PREFIX}-test*"
+PROID_REDCHAN_MAPPING = f"{__REDIS_KEY_PREFIX}:proid_redchan_mapping.hash"
+"""项目ID 与 订阅的 redis channel 的集合  
+例：  
+key             | value  
+project_name_1  | ["chan_1", "chan_2"]  
+project_name_2  | chan_3  
+"""

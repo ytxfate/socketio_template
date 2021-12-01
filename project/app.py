@@ -14,7 +14,7 @@ import socketio
 from loguru import logger
 # Local application imports
 from project.utils.operate_redis import OperateRedis
-from project.config.sys_config import SIO_UID_ROOM_HASH
+from project.config.sys_config import PROID_REDCHAN_MAPPING
 
 
 eventlet.monkey_patch()
@@ -41,42 +41,68 @@ def connect(sid, environ):
     logger.info(f'connect : {sid}')
 
 @sio.on("login")
-def login(sid, data):
+def login(sid, pid):
     """登录"""
-    # 检验用户
-    room_name = redis_cli.hget(SIO_UID_ROOM_HASH, data)
-    if room_name is None:
+    # 获取项目需要订阅的 redis channel
+    print(PROID_REDCHAN_MAPPING)
+    red_chans = redis_cli.hget(PROID_REDCHAN_MAPPING, pid)
+    if red_chans is None:   # 未识别的项目id
         sio.disconnect(sid=sid)
-        logger.info(f'room name get error, disconnect : {sid}')
-    else:
-        before_room_users = sio.manager.rooms.get("/", {}).get(room_name, {})
-        if len(before_room_users) <= 0:
-            sio.start_background_task(back_task, room_name=room_name)
-        sio.enter_room(sid, room_name)
-        logger.info(f'{sid} join room [{room_name}]')
+        logger.error(f'check project id error, disconnect : {sid}')
+        return
+    try:
+        if red_chans.startswith('[') and red_chans.endswith("]"):
+            red_chans = json.loads(red_chans)
+            if not isinstance(red_chans, list):
+                raise TypeError("chans not list, must be list")
+        else:
+            red_chans = [red_chans]
+    except Exception as e:  # 格式化channel名称失败
+        logger.exception(e)
+        logger.error(red_chans)
+        sio.disconnect(sid=sid)
+        logger.error(f'get project sub chans error, disconnect : {sid}')
+        return
+    # join room
+    room_name = f"RN_{pid}"
+    before_room_users = sio.manager.rooms.get("/", {}).get(room_name, {})
+    sio.enter_room(sid, room_name)  # join room 排在任务开启之前
+    if len(before_room_users) <= 0: # room 没人时开启后台推送任务
+        sio.start_background_task(back_task,
+                                  room_name=room_name,
+                                  red_chans=red_chans)
+    logger.info(f'{sid} join room [{room_name}]')
 
 
 @sio.event
-def disconnect(sid):    
+def disconnect(sid):
+    # 查找这个sid所有join的room
     room_names = sio.rooms(sid)
     for room_name in room_names:
         sio.leave_room(sid, room_name)
     logger.info(f'disconnect : {sid}, leave rooms {room_names}')
 
 
-def back_task(room_name: str):
+def back_task(room_name: str, red_chans: list):
     """后台任务实例
     """
+    # 判断 room 是否无人
+    room_users = sio.manager.rooms.get("/", {}).get(room_name, {})
+    if len(room_users) <= 0:
+        logger.info(f"room [{room_name}] has no client, stop...")
+        sio.sleep() # 必加
+        return
+    
     pub = redis_cli.pubsub()
-    pub.subscribe(room_name)
+    pub.subscribe(*red_chans)   # 订阅多个channel
     for p_res in pub.listen():
         # 判断消息类型
-        if p_res.get("type") != 'message':
+        if "message" not in p_res.get("type", ""):
             sio.sleep()
             continue
         # 判断数据格式是否正确
+        logger.debug(f'p_res: {p_res}')
         res_data = p_res.get("data", "")
-        logger.info(f'res_data: {res_data}')
         try:
             res_data = json.loads(res_data, encoding='utf-8')
         except Exception as e:
@@ -89,24 +115,12 @@ def back_task(room_name: str):
             logger.warning(f'redis subscribe info is not dict: {res_data}')
             sio.sleep()
             continue
-        # 判断必要字段是否存在
-        if "uid" not in res_data or "data" not in res_data:
-            logger.warning(f'Important fields[uid, data] are missing: {res_data}')
-            sio.sleep()
-            continue
-        # 判断 room name 是否存在
-        room_name = redis_cli.hget(SIO_UID_ROOM_HASH, res_data['uid'])
-        if room_name is None:
-            logger.warning(f'mismatch room name: {res_data}')
-            sio.sleep()
-            return
         # 判断 room 是否无人
         room_users = sio.manager.rooms.get("/", {}).get(room_name, {})
         if len(room_users) <= 0:
-            logger.info(f"room [{room_name}] has no client, skip...")
+            logger.info(f"room [{room_name}] has no client, stop...")
             sio.sleep() # 必加
             return
         # 推送数据
-        logger.debug(f"room [{room_name}] push msg: {res_data['data']}")
-        sio.emit("server_response", res_data['data'], room=room_name)
-
+        logger.debug(f"room [{room_name}] push msg: {res_data}")
+        sio.emit("server_response", res_data, room=room_name)
