@@ -9,7 +9,7 @@
 # ********** 数据库配置 ********** #
 # redis 数据库
 REDIS_CONF = {                  # 生产系统使用
-    "HOST": "127.0.0.1",
+    "HOST": "test-redis-for-socketio",
     "PORT": 6379,
     "AUTH": False,              # AUTH 为 True 时需要进行 用户认证
     "PASSWORD": "xxx",

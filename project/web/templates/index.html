@@ -1,23 +1,37 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <meta charset="UTF-8">
     <title></title>
     <script type="text/javascript" src="/static/js/jquery-1.4.2.min.js"></script>
     <script type="text/javascript" src="/static/js/socket.io.min.js"></script>
 </head>
+
 <body>
-<h1 id="t"></h1>
-<script type="text/javascript">
-    $(document).ready(function() {
-        namespace = ""; //'/test_conn';
-        var socket = io.connect(location.protocol + '//' + document.domain + ':' + '5000' + namespace);
-        socket.emit("login", "ceshi01")
-        socket.on('server_response', function(res) {
-            console.log(res)
-            $('#t').text(res.data + " " + res.uid);
+    <h1 id="t"></h1>
+    <script type="text/javascript">
+        $(document).ready(function () {
+            namespace = ""; //'/test_conn';
+            var socket = io.connect(location.protocol + '//' + document.domain + ':' + '5000' + namespace);
+            socket.on("connect", (s) => {
+                console.log("connect .... ")
+                socket.emit("login", "ceshi01");
+            });
+
+            socket.on('server_response', function (res) {
+                console.log(res)
+                $('#t').text(res.data + " " + res.uid);
+            });
         });
-    });
-</script>
+    </script>
+    <script>
+        // $(document).ready(function() {
+        //     setTimeout(() => {
+        //         location.reload()
+        //     }, 200000);
+        // })
+    </script>
 </body>
+
 </html>

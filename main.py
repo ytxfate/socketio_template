@@ -16,4 +16,6 @@ from project.config.sys_config import app_run_conf
 
 
 if __name__ == '__main__':
-    eventlet.wsgi.server(eventlet.listen((app_run_conf['HOST'], app_run_conf['PORT'])), app)
+    eventlet.wsgi.server(eventlet.listen((app_run_conf['HOST'], app_run_conf['PORT'])),
+                         app,
+                         log=logger)

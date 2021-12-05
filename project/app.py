@@ -19,13 +19,12 @@ from project.config.sys_config import PROID_REDCHAN_MAPPING
 
 eventlet.monkey_patch()
 
-redis_cli = OperateRedis().get_conn()
+opt_redis = OperateRedis()
 
 
 sio = socketio.Server(
     async_mode='eventlet',
     cors_allowed_origins="*",
-    logger=logger,
 )
 app = socketio.WSGIApp(
     sio,
@@ -39,12 +38,14 @@ app = socketio.WSGIApp(
 @sio.event
 def connect(sid, environ):
     logger.info(f'connect : {sid}')
+    return
 
 @sio.on("login")
 def login(sid, pid):
     """登录"""
     # 获取项目需要订阅的 redis channel
-    print(PROID_REDCHAN_MAPPING)
+    logger.info(f'redis hash name: {PROID_REDCHAN_MAPPING}')
+    redis_cli = opt_redis.get_conn()
     red_chans = redis_cli.hget(PROID_REDCHAN_MAPPING, pid)
     if red_chans is None:   # 未识别的项目id
         sio.disconnect(sid=sid)
@@ -72,6 +73,7 @@ def login(sid, pid):
                                   room_name=room_name,
                                   red_chans=red_chans)
     logger.info(f'{sid} join room [{room_name}]')
+    return
 
 
 @sio.event
@@ -81,6 +83,7 @@ def disconnect(sid):
     for room_name in room_names:
         sio.leave_room(sid, room_name)
     logger.info(f'disconnect : {sid}, leave rooms {room_names}')
+    return
 
 
 def back_task(room_name: str, red_chans: list):
@@ -88,11 +91,13 @@ def back_task(room_name: str, red_chans: list):
     """
     # 判断 room 是否无人
     room_users = sio.manager.rooms.get("/", {}).get(room_name, {})
+    logger.info(f"========== start room: {room_name} ,sub redis channel: {red_chans}")
     if len(room_users) <= 0:
         logger.info(f"room [{room_name}] has no client, stop...")
         sio.sleep() # 必加
         return
-    
+
+    redis_cli = opt_redis.get_conn()
     pub = redis_cli.pubsub()
     pub.subscribe(*red_chans)   # 订阅多个channel
     for p_res in pub.listen():
@@ -118,9 +123,16 @@ def back_task(room_name: str, red_chans: list):
         # 判断 room 是否无人
         room_users = sio.manager.rooms.get("/", {}).get(room_name, {})
         if len(room_users) <= 0:
-            logger.info(f"room [{room_name}] has no client, stop...")
+            pub.unsubscribe(*red_chans)
+            sio.close_room(room=room_name)
+            logger.info(f"room [{room_name}] has no client, close...")
+            logger.info(f"========== close room: {room_name} ,close sub redis channel: {red_chans}")
             sio.sleep() # 必加
-            return
-        # 推送数据
-        logger.debug(f"room [{room_name}] push msg: {res_data}")
-        sio.emit("server_response", res_data, room=room_name)
+            break
+        else:
+            # 推送数据
+            logger.debug(f"room [{room_name}] push msg: {res_data}")
+            sio.emit("server_response", res_data, room=room_name)
+    del pub
+    logger.info(f'---------- now has sockets: {sio.eio.sockets}, rooms: {sio.manager.rooms}')
+    return
